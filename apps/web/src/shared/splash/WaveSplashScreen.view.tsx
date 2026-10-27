@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
+import { getBrandAssetUrl } from '../brand/brand-assets.util';
 
 export function WaveSplashScreenView(): React.JSX.Element | null {
   const [isVisible, setIsVisible] = useState<boolean>(true);
@@ -40,7 +41,7 @@ export function WaveSplashScreenView(): React.JSX.Element | null {
         {/* Spotlight Gold Emblem */}
         <div className="wave-splash-emblem-wrapper">
           <Image
-            src="/brand/wave-records-emblem-hd.png"
+            src={getBrandAssetUrl('/brand/wave-records-emblem-hd.png')}
             alt="Wave Records LLC Logo"
             width={130}
             height={130}

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Image from 'next/image';
+import { getBrandAssetUrl } from './brand-assets.util';
 
 export interface WaveHexLogoProps {
   readonly size?: number;
@@ -40,7 +41,7 @@ export function WaveHexLogoView({
         }}
       >
         <Image
-          src="/brand/wave-records-emblem-hd.png"
+          src={getBrandAssetUrl('/brand/wave-records-emblem-hd.png')}
           alt="Wave Records LLC Official Emblem"
           width={size}
           height={size}

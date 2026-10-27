@@ -1,14 +1,20 @@
 /** @type {import('next').NextConfig} */
 const isGithubPages = process.env.GITHUB_PAGES === 'true';
+const basePath = isGithubPages ? '/wave-records-platform' : '';
 
 const nextConfig = {
   transpilePackages: ['@wave/contracts', '@wave/domain-core', '@wave/api-client'],
   reactStrictMode: true,
+  basePath,
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
+  images: {
+    unoptimized: true,
+  },
   ...(isGithubPages
     ? {
         output: 'export',
-        basePath: '/wave-records-platform',
-        images: { unoptimized: true },
       }
     : {
         async rewrites() {

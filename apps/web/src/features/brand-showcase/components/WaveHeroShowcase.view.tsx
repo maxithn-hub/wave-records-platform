@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { getBrandAssetUrl } from '../../../shared/brand/brand-assets.util';
 
 export function WaveHeroShowcaseView(): React.JSX.Element {
   return (
@@ -71,7 +72,7 @@ export function WaveHeroShowcaseView(): React.JSX.Element {
             
             <div className="wave-spotlight-emblem-frame">
               <Image
-                src="/brand/wave-records-emblem-hd.png"
+                src={getBrandAssetUrl('/brand/wave-records-emblem-hd.png')}
                 alt="Wave Records LLC Official Emblem"
                 width={260}
                 height={260}
