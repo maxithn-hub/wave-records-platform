@@ -1,0 +1,439 @@
+// ============================================================================
+// WAVE RECORDS LLC - POSTGRESQL DATABASE SCHEMA (PHASE 0 FOUNDATION)
+// Enforces: Multi-Tenancy, Anti-IDOR Server Mapping, AES-256-GCM Tax Storage,
+// Release State Machine, Escrow Splits, and DECIMAL(18, 10) Royalty Ledger.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantTier {
+  INDIVIDUAL_LAUNCH // Maps to Revelator "Launch" Child Account
+  LABEL_GROWTH      // Maps to Revelator "Growth" Child Account
+}
+
+enum TenantStatus {
+  ONBOARDING
+  ACTIVE
+  RESTRICTED_COMPLIANCE
+  SUSPENDED_FRAUD
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum TaxFormType {
+  W9
+  W8BEN
+  W8BENE
+}
+
+enum TaxDeclarationStatus {
+  MISSING
+  SUBMITTED_UNDER_REVIEW
+  VALIDATED
+  EXPIRED
+  REJECTED
+}
+
+enum ReleaseType {
+  SINGLE
+  EP
+  ALBUM
+}
+
+enum ReleaseStatus {
+  DRAFT
+  UPLOADING_ASSETS
+  FORENSIC_PROCESSING
+  MANUAL_COPYRIGHT_REVIEW
+  MODERATION_QUEUE
+  APPROVED_FOR_DELIVERY
+  DISPATCHING_TO_REVELATOR
+  LIVE_ON_DSPS
+  REJECTED
+  TAKEDOWN_REQUESTED
+}
+
+enum SplitStatus {
+  PENDING_INVITATION_ESCROW
+  ACCEPTED_ACTIVE
+  REVOKED
+}
+
+enum LedgerEntryType {
+  DSP_ROYALTY_CREDIT
+  WAVE_COMMISSION_DEDUCTION
+  ESCROW_SPLIT_HOLD
+  ESCROW_SPLIT_RELEASE
+  PAYOUT_WITHDRAWAL_DEBIT
+}
+
+model Tenant {
+  id                    String       @id @default(uuid()) @db.Uuid
+  legalName             String       @db.VarChar(160)
+  displayName           String       @db.VarChar(100)
+  tier                  TenantTier
+  status                TenantStatus @default(ONBOARDING)
+  countryCode           String       @db.Char(2)
+  commissionRatePercent Decimal      @default(15.0000000000) @db.Decimal(18, 10)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  users                 User[]
+  revelatorMapping      RevelatorTenantMapping?
+  kycVerifications      KycVerification[]
+  taxDeclarations       TaxDeclaration[]
+  releases              Release[]
+  ledgerEntries         RoyaltyLedgerEntry[]
+  payoutRequests        PayoutRequest[]
+}
+
+enum UserRole {
+  TENANT_OWNER
+  TENANT_MEMBER
+  WAVE_COMPLIANCE_ADMIN
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @db.Uuid
+  email         String         @unique @db.VarChar(255)
+  passwordHash  String         @db.VarChar(255)
+  role          UserRole       @default(TENANT_OWNER)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  refreshTokens RefreshToken[]
+
+  @@index([tenantId])
+}
+
+/// Opaque refresh tokens. Only the SHA-256 hash (peppered) is stored.
+/// Tokens in the same familyId descend from one login; reuse of a rotated
+/// token revokes the whole family (token theft detection).
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  familyId     String    @db.Uuid
+  tokenHash    String    @unique @db.Char(64)
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?   @db.Uuid
+  userAgent    String?   @db.VarChar(255)
+  ip           String?   @db.VarChar(64)
+  createdAt    DateTime  @default(now())
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+/// Append-only compliance audit trail (never updated or deleted).
+model ComplianceAuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  actorUserId    String   @db.Uuid
+  targetTenantId String   @db.Uuid
+  action         String   @db.VarChar(64)
+  entityType     String   @db.VarChar(40)
+  entityId       String   @db.Uuid
+  details        String?  @db.VarChar(1000)
+  ip             String?  @db.VarChar(64)
+  createdAt      DateTime @default(now())
+
+  @@index([targetTenantId, createdAt])
+}
+
+/// SERVER-ONLY TABLE: Never serialized to Web or Android clients.
+/// Prevents IDOR attacks by resolving Revelator Child Account IDs strictly in backend memory.
+model RevelatorTenantMapping {
+  id                    String   @id @default(uuid()) @db.Uuid
+  tenantId              String   @unique @db.Uuid
+  revelatorEnterpriseId Int      @unique
+  revelatorUserId       String   @db.VarChar(128)
+  revelatorPlanType     String   @db.VarChar(32)
+  provisionedAt         DateTime @default(now())
+
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+model KycVerification {
+  id                   String    @id @default(uuid()) @db.Uuid
+  tenantId             String    @db.Uuid
+  status               KycStatus @default(NOT_STARTED)
+  documentType         String?   @db.VarChar(40)
+  /// Storage key resolved by DocumentStoragePort (local disk now, S3 in Phase 2)
+  s3ObjectKey          String?   @db.VarChar(512)
+  mimeType             String?   @db.VarChar(64)
+  encryptionIvHex      String?   @db.VarChar(32)
+  encryptionAuthTagHex String?   @db.VarChar(32)
+  verifiedAt           DateTime?
+  rejectionReason      String?   @db.VarChar(500)
+  reviewedByUserId     String?   @db.Uuid
+  reviewedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+}
+
+model TaxDeclaration {
+  id                    String               @id @default(uuid()) @db.Uuid
+  tenantId              String               @db.Uuid
+  formType              TaxFormType
+  status                TaxDeclarationStatus @default(SUBMITTED_UNDER_REVIEW)
+  taxpayerLegalName     String               @db.VarChar(160)
+  residenceCountryCode  String               @db.Char(2)
+  /// Encrypted SSN / EIN / Foreign Tax ID using AES-256-GCM (null for W-8BEN-E PDF submissions)
+  encryptedTaxIdHex     String?              @db.Text
+  encryptionIvHex       String?              @db.VarChar(32)
+  encryptionAuthTagHex  String?              @db.VarChar(32)
+  /// Only the last 4 characters, for masked display (e.g. ***-**-6789)
+  taxIdLast4            String?              @db.VarChar(4)
+  /// Non-sensitive form fields (classification, address, treaty country...) as JSON
+  formDataJson          String?              @db.Text
+  /// W-8BEN-E: encrypted signed PDF stored via DocumentStoragePort
+  pdfDocumentKey        String?              @db.VarChar(512)
+  pdfIvHex              String?              @db.VarChar(32)
+  pdfAuthTagHex         String?              @db.VarChar(32)
+  treatyClaimed         Boolean              @default(false)
+  electronicSignature   String               @db.VarChar(160)
+  signerIp              String?              @db.VarChar(64)
+  signerUserAgent       String?              @db.VarChar(255)
+  signedAt              DateTime             @default(now())
+  expiresAt             DateTime?
+  reviewedByUserId      String?              @db.Uuid
+  reviewedAt            DateTime?
+  rejectionReason       String?              @db.VarChar(500)
+
+  tenant                Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+}
+
+model Release {
+  id                      String        @id @default(uuid()) @db.Uuid
+  tenantId                String        @db.Uuid
+  title                   String        @db.VarChar(200)
+  versionTitle            String?       @db.VarChar(120)
+  primaryArtist           String        @db.VarChar(160)
+  releaseType             ReleaseType   @default(SINGLE)
+  primaryGenre            String        @default("Latin") @db.VarChar(80)
+  releaseDate             DateTime?
+  pLineYear               Int           @default(2026)
+  pLineOwner              String        @default("Wave Records LLC") @db.VarChar(160)
+  cLineYear               Int           @default(2026)
+  cLineOwner              String        @default("Wave Records LLC") @db.VarChar(160)
+  upcCode                 String?       @unique @db.VarChar(13)
+  status                  ReleaseStatus @default(DRAFT)
+  artworkQuarantineKey    String?       @db.VarChar(512)
+  artworkSha256Hash       String?       @db.Char(64)
+  artworkVerified         Boolean       @default(false)
+  blockUgcMonetization    Boolean       @default(false) // Auto-set if ACRCloud score is 45% - 79%
+  licenseDocumentKey      String?       @db.VarChar(512)
+  licensePdfIvHex         String?       @db.VarChar(32)
+  licensePdfAuthTagHex    String?       @db.VarChar(32)
+  moderationNotes         String?       @db.VarChar(500)
+  moderatedByUserId       String?       @db.Uuid
+  moderatedAt             DateTime?
+  revelatorReleaseId      Int?          @unique
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  tenant                  Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tracks                  Track[]
+  forensicReports         ForensicScanReport[]
+  deliveryJobs            RevelatorDeliveryJob[]
+
+  @@index([tenantId, status])
+}
+
+model RevelatorDeliveryJob {
+  id                       String    @id @default(uuid()) @db.Uuid
+  releaseId                String    @db.Uuid
+  tenantId                 String    @db.Uuid
+  revelatorEnterpriseId    Int
+  revelatorUserId          String    @db.VarChar(128)
+  revelatorPlanType        String    @db.VarChar(32)
+  revelatorReleaseId       Int?
+  unpromptedTokenCached    Boolean   @default(false)
+  ugcMonetizationBlocked   Boolean   @default(false)
+  ugcMonetizationPolicy    String    @db.VarChar(40)
+  dspTargetsJson           String    @db.Text
+  payloadSnapshotJson      String    @db.Text
+  deliveryStatus           String    @db.VarChar(40)
+  attemptCount             Int       @default(1)
+  lastError                String?   @db.VarChar(500)
+  moderatedByUserId        String    @db.Uuid
+  dispatchedAt             DateTime?
+  createdAt                DateTime  @default(now())
+
+  release                  Release   @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  @@index([releaseId, createdAt])
+}
+
+model ForensicScanReport {
+  id                   String   @id @default(uuid()) @db.Uuid
+  releaseId            String   @db.Uuid
+  tenantId             String   @db.Uuid
+  artworkWidthPx       Int?
+  artworkHeightPx      Int?
+  artworkColorSpace    String?  @db.VarChar(16)
+  artworkPassed        Boolean  @default(false)
+  audioSilenceMaxRatio Float    @default(0)
+  audioSignalPassed    Boolean  @default(false)
+  maxAcrCloudScore     Int      @default(0)
+  acrCloudVerdict      String   @db.VarChar(40)
+  matchedTitle         String?  @db.VarChar(200)
+  matchedArtist        String?  @db.VarChar(160)
+  summaryReason        String   @db.VarChar(500)
+  createdAt            DateTime @default(now())
+
+  release              Release  @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  @@index([releaseId, createdAt])
+}
+
+model Track {
+  id                   String           @id @default(uuid()) @db.Uuid
+  releaseId            String           @db.Uuid
+  trackNumber          Int
+  title                String           @db.VarChar(200)
+  versionTitle         String?          @db.VarChar(120)
+  primaryArtist        String           @default("") @db.VarChar(160)
+  isExplicit           Boolean          @default(false)
+  isInstrumental       Boolean          @default(false)
+  audioLanguage        String           @default("es") @db.VarChar(8)
+  isrcCode             String?          @unique @db.Char(12)
+  wavQuarantineKey     String?          @db.VarChar(512)
+  wavSha256Hash        String?          @db.Char(64)
+  sampleRateHz         Int?
+  bitDepth             Int?
+  channels             Int?
+  durationSeconds      Int?
+  acrCloudScore        Int?
+  acrCloudVerdict      String?          @db.VarChar(40)
+  createdAt            DateTime         @default(now())
+
+  release              Release          @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  splits               SplitAgreement[]
+
+  @@unique([releaseId, trackNumber])
+  @@index([releaseId])
+}
+
+model MultipartUploadSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  tenantId            String    @db.Uuid
+  releaseId           String    @db.Uuid
+  trackId             String?   @db.Uuid
+  assetKind           String    @db.VarChar(24) // TRACK_WAV | RELEASE_ARTWORK
+  fileName            String    @db.VarChar(255)
+  expectedByteSize    Int
+  expectedSha256Hex   String    @db.Char(64)
+  totalParts          Int
+  uploadedPartsJson   String    @default("[]") @db.Text
+  status              String    @default("INITIATED") @db.VarChar(24)
+  quarantineObjectKey String?   @db.VarChar(512)
+  createdAt           DateTime  @default(now())
+  completedAt         DateTime?
+
+  @@index([tenantId, releaseId])
+}
+
+model SplitAgreement {
+  id                    String      @id @default(uuid()) @db.Uuid
+  trackId               String      @db.Uuid
+  collaboratorEmail     String      @db.VarChar(255)
+  collaboratorTenantId  String?     @db.Uuid // Nullable for unregistered "Ghost Account" collaborators
+  sharePercentage       Decimal     @db.Decimal(18, 10)
+  status                SplitStatus @default(PENDING_INVITATION_ESCROW)
+  acceptedAt            DateTime?
+  createdAt             DateTime    @default(now())
+
+  track                 Track               @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  escrowHolds           EscrowRoyaltyHold[]
+
+  @@index([trackId])
+  @@index([collaboratorEmail])
+}
+
+model EscrowRoyaltyHold {
+  id                      String         @id @default(uuid()) @db.Uuid
+  splitAgreementId        String         @db.Uuid
+  trackId                 String         @db.Uuid
+  sourceTenantId          String         @db.Uuid
+  collaboratorEmail       String         @db.VarChar(255)
+  heldAmountUsd           Decimal        @db.Decimal(18, 10)
+  statementIdempotencyKey String         @unique @db.VarChar(128)
+  status                  String         @default("HELD_IN_ESCROW") @db.VarChar(32)
+  claimedByTenantId       String?        @db.Uuid
+  releasedAt              DateTime?
+  createdAt               DateTime       @default(now())
+
+  splitAgreement          SplitAgreement @relation(fields: [splitAgreementId], references: [id], onDelete: Cascade)
+
+  @@index([collaboratorEmail, status])
+  @@index([sourceTenantId, status])
+}
+
+model RoyaltyStatementIngest {
+  id                  String   @id @default(uuid()) @db.Uuid
+  idempotencyKey      String   @unique @db.VarChar(128)
+  trackId             String   @db.Uuid
+  releaseId           String   @db.Uuid
+  ownerTenantId       String   @db.Uuid
+  dspStore            String   @db.VarChar(40)
+  countryCode         String   @db.Char(2)
+  streamsCount        Int
+  grossRevenueUsd     Decimal  @db.Decimal(18, 10)
+  waveCommissionUsd   Decimal  @db.Decimal(18, 10)
+  netDistributableUsd Decimal  @db.Decimal(18, 10)
+  createdAt           DateTime @default(now())
+
+  @@index([ownerTenantId, createdAt])
+  @@index([trackId])
+}
+
+model RoyaltyLedgerEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @db.Uuid
+  entryType       LedgerEntryType
+  amountUsd       Decimal         @db.Decimal(18, 10)
+  runningBalance  Decimal         @db.Decimal(18, 10)
+  idempotencyKey  String          @unique @db.VarChar(128)
+  referenceId     String?         @db.VarChar(128)
+  description     String          @db.VarChar(255)
+  createdAt       DateTime        @default(now())
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, createdAt])
+}
+
+model PayoutRequest {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  requestedAmount Decimal  @db.Decimal(18, 10)
+  idempotencyKey  String   @unique @db.VarChar(128)
+  status          String   @default("PENDING_APPROVAL") @db.VarChar(40)
+  createdAt       DateTime @default(now())
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+}

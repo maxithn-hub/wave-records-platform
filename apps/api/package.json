@@ -1,0 +1,39 @@
+{
+  "name": "@wave/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file=.env dist/server.js",
+    "start": "node --env-file=.env dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "build": "prisma generate && tsc",
+    "test": "node --env-file=.env --test --test-concurrency=1 dist/__tests__/security-foundation.test.js dist/__tests__/phase1-compliance-integration.test.js dist/__tests__/phase2-catalog-multipart.test.js dist/__tests__/phase3-forensics-acrcloud.test.js dist/__tests__/phase4-moderation-revelator.test.js dist/__tests__/phase5-royalties-escrow-payouts.test.js",
+    "db:migrate": "dotenv -e .env -- prisma migrate dev",
+    "db:deploy": "dotenv -e .env -- prisma migrate deploy",
+    "db:seed": "node --env-file=.env dist/seed.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/multipart": "^9.0.3",
+    "@nestjs/common": "^11.0.11",
+    "@nestjs/core": "^11.0.11",
+    "@nestjs/platform-fastify": "^11.0.11",
+    "@nestjs/throttler": "^6.4.0",
+    "@node-rs/argon2": "^2.0.2",
+    "@prisma/client": "~6.4.1",
+    "@wave/contracts": "workspace:*",
+    "@wave/domain-core": "workspace:*",
+    "fastify": "^5.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dotenv-cli": "^8.0.0",
+    "prisma": "~6.4.1",
+    "typescript": "^5.7.3"
+  }
+}

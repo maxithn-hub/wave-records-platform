@@ -1,0 +1,22 @@
+{
+  "name": "wave-records-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wave Records LLC - B2B/B2C Headless Music Distribution & Royalty Platform",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.0",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.0"
+  },
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
